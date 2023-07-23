@@ -1,0 +1,17 @@
+{
+  "name": "soul",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node .",
+    "dev": "nodemon . --ignore projects.json --ignore projects"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.11.0",
+    "simple-git": "^3.19.1"
+  }
+}
