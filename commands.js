@@ -147,6 +147,11 @@ createCommand("project", "<name> [options] - Shows/Changes project info", async 
         let option = args[2]
         let value = args[3]
         if (option == "github") {
+            // check if link ends in .git
+            if (!value.endsWith(".git")) {
+                // add .git to end
+                value += ".git"
+            }
             project.setLink(value)
             project.update()
             embed(message, `Set github link for project ${name} to ${value}.`)
@@ -186,10 +191,15 @@ createCommand("project", "<name> [options] - Shows/Changes project info", async 
     } else if (option == "sync") {
         let sentMsg = null
         embed(message, `:hourglass_flowing_sand: Syncing...`).then(msg => sentMsg = msg)
+        // stop process if running
+        let process = project.getProcess()
+        if (process != null) {
+            process.kill()
+        }
         try {
             let errors = await project.syncFs()
             let msg = []
-            msg.push(`:hourglass: **Syncing finished.**\n#### Errors:`)
+            msg.push(`:hourglass: **Syncing finished.**\n### Errors:`)
             errors.forEach(e => {
                 msg.push("- " + project.interpretSyncError(e))
             })
@@ -203,15 +213,70 @@ createCommand("project", "<name> [options] - Shows/Changes project info", async 
         catch (err) {
             message.channel.send("An error occured while syncing the project.")
         }
+    } else if (option == "npm") {
+        let sentMsg = null
+        await embed(message, `:hourglass_flowing_sand: Installing dependencies...`).then(msg => sentMsg = msg)
+        let output = await project.npmInstall()
+        let msg = []
+        // remove lone , from output
+        msg.push(`:hourglass: **Installing finished.**\n### Output:`)
+        msg.push("```")
+        msg.push(output)
+        msg.push("```")
+        msg = msg.join("\n")
+        msg = msg.replaceAll(",\n", "\n")
+        let newEmbed = new EmbedBuilder()
+            .setDescription(msg)
+            .setColor("#0000ff")
+        sentMsg.edit({ embeds: [newEmbed] })
     } else if (option == "start") {
         let process = project.getProcess()
         if (process != null) {
             message.channel.send(`Project ${name} is already running.`)
             return
         }
+        // check is args an type of array
+        console.log(project.args)
         let proc = new Process(project.name, project.command, project.env, project.args)
         proc.start()
         embed(message, `Started project ${name}.`)
+    } else if (option == "restart") {
+        let process = project.getProcess()
+        if (process == null) {
+            message.channel.send(`Project ${name} is not running.`)
+            return
+        }
+        process.restart()
+        embed(message, `Restarted project ${name}.`)
+    } else if (option == "logs") {
+        let process = project.getProcess()
+        if (process == null) {
+            message.channel.send(`Project ${name} is not running.`)
+            return
+        }
+        let logs = process.getLogs()
+        if (logs.length == 0) {
+            message.channel.send(`Project ${name} has no logs.`)
+            return
+        }
+        let msg = []
+        msg.push(`**Logs for project ${name}**`)
+        logs.forEach(l => {
+            msg.push(l)
+        })
+        msg = msg.join("\n")
+        embed(message, msg)
+
+    } else if (option == "kill") {
+        let process = project.getProcess()
+        if (process == null) {
+            message.channel.send(`Project ${name} is not running.`)
+            return
+        }
+        process.kill()
+        embed(message, `Killed project ${name}.`)
+    } else {
+        message.channel.send("Please provide a valid option. (set/sync/npm/start/restart/kill/logs)")
     }
 
 })
@@ -242,6 +307,5 @@ createCommand("list", "<type (projects/processes)> - Lists projects/processes", 
         message.channel.send("Please provide a valid type. (projects/processes)")
     }
 })
-
 
 module.exports.commands = commands

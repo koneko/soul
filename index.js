@@ -4,6 +4,10 @@ const { Client, Events, GatewayIntentBits } = require('discord.js');
 const fs = require("fs")
 const simpleGit = require("simple-git")
 const path = require("path")
+const util = require('util');
+const fsPromises = fs.promises;
+const fsRmAsync = util.promisify(fsPromises.rm);
+
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds,
@@ -35,13 +39,25 @@ class Process {
         return Date.now() - this.startedTime
     }
     start () {
-        let proc = client.spawn(this.command, this.args, { env: { ...process.env, ...this.env } })
+        console.log(this.command, this.args, { env: { ...this.env } })
+        let projectPath = path.join(process.cwd(), `./projects/${this.name}`)
+        let proc = client.spawn(this.command, this.args, { cwd: projectPath, env: { ...process.env, ...this.env } })
         this.proc = proc
         proc.stdout.on("data", (data) => {
             let timestamp = new Date()
-            timestamp.setHours(timestamp.getHours() + 2)
             let time = `[${timestamp.getHours()}:${timestamp.getMinutes()}:${timestamp.getSeconds()}] `
+            // if this.stdout is > 50 lines, remove the first line
+            if (this.stdout.length > 50) this.stdout.shift()
             this.stdout.push(time + data.toString())
+            console.log(data.toString())
+        })
+        proc.stderr.on("data", (data) => {
+            let timestamp = new Date()
+            let time = `[${timestamp.getHours()}:${timestamp.getMinutes()}:${timestamp.getSeconds()}] `
+            // if this.stdout is > 50 lines, remove the first line
+            if (this.stdout.length > 50) this.stdout.shift()
+            this.stdout.push(time + data.toString())
+            console.error(data.toString())
         })
     }
     restart () {
@@ -59,6 +75,9 @@ class Process {
     }
     remove () {
         client.processes.splice(client.processes.indexOf(this), 1)
+    }
+    getLogs () {
+        return this.stdout
     }
 }
 
@@ -154,8 +173,37 @@ class Project {
             this.args = soul.args
         }
 
+
         if (errors.length > 0) return errors;
         else return true;
+    }
+    async npmInstall () {
+        return new Promise((resolve, reject) => {
+            const projectPath = `./projects/${this.name}`;
+            const packageJsonPath = path.join(projectPath, 'package.json');
+            if (fs.existsSync(packageJsonPath)) {
+                const npm = client.spawn('npm', ['install'], { cwd: projectPath, shell: true });
+                let output = []
+                npm.stdout.on('data', (data) => {
+                    console.log(`npm install stdout: ${data}`);
+                    output.push(data)
+                });
+                npm.stderr.on('data', (data) => {
+                    console.error(`npm install stderr: ${data}`);
+                    output.push(data)
+                });
+                npm.on('close', (code) => {
+                    if (code === 0) {
+                        output.join("\n")
+                        output += "-----success-----"
+                        resolve(output);
+                    } else {
+                        reject([code, output.join("\n")]);
+                    }
+                });
+            }
+        })
+
     }
     serialize () {
         let obj = {
@@ -166,7 +214,6 @@ class Project {
             command: this.command,
             args: this.args
         }
-
         console.log(obj)
         return obj
     }
@@ -177,6 +224,15 @@ class Project {
         this.autoStart = obj.autoStart
         this.command = obj.command
         this.args = obj.args
+
+        if (typeof this.args == "string") {
+            // if no spaces
+            if (!this.args.includes(" ")) {
+                this.args = [this.args]
+            } else {
+                this.args = this.args.split(" ")
+            }
+        }
     }
     populate () {
         let projects = JSON.parse(fs.readFileSync("./projects.json", "utf8"))
@@ -194,6 +250,8 @@ class Project {
             return "No soul config file found in root of project."
         } else if (error == "none") {
             return "No errors occured during sync process."
+        } else if (error == "package-null") {
+            return "No package.json file found in root of project."
         } else {
             return "Not a valid error."
         }
@@ -221,7 +279,7 @@ class Project {
         if (process != null) await process.kill()
         // delete project folder if it exists
         const projectPath = `./projects/${this.name}`;
-        if (fs.existsSync(projectPath)) fs.rmSync(projectPath, { recursive: true, force: true });
+        if (fs.existsSync(projectPath)) fsRmAsync(projectPath, { recursive: true, force: true });
         return true
     }
 }
@@ -242,10 +300,7 @@ client.once(Events.ClientReady, (c) => {
     let projects = JSON.parse(fs.readFileSync("./projects.json", "utf8"))
     projects.forEach(rawP => {
         let p = new Project(rawP.name)
-        p.setLink(rawP.githubLink)
-        p.env = rawP.env
-        p.autoStart = rawP.autoStart
-        p.command = rawP.command
+        p.populate()
 
         if (p.getProcess() == null && p.autoStart) {
             let proc = new Process(p.name, p.command, p.env, p.args)
